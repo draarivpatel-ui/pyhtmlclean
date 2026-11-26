@@ -186,6 +186,15 @@ class DropElementTests(unittest.TestCase):
 
 
 class TokenAndNoiseTests(unittest.TestCase):
+    def test_html_whitespace_delimiters_in_start_tags(self):
+        for delimiter in ("\f", "\r", "\t"):
+            with self.subTest(delimiter=repr(delimiter)):
+                source = f'<img{delimiter}src{delimiter}={delimiter}"/safe.png"{delimiter}onerror{delimiter}=alert(1)>'
+                self.assertEqual(
+                    sanitize(source, "basic"),
+                    '<img src="/safe.png">',
+                )
+
     def test_comment_is_removed(self):
         self.assertEqual(sanitize("a<!-- secret -->b"), "ab")
 
