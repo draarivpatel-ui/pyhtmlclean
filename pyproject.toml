@@ -29,6 +29,11 @@ classifiers = [
 ]
 dependencies = []
 
+[project.urls]
+Homepage = "https://github.com/draarivpatel-ui/pyhtmlclean"
+Repository = "https://github.com/draarivpatel-ui/pyhtmlclean"
+Issues = "https://github.com/draarivpatel-ui/pyhtmlclean/issues"
+
 [tool.setuptools]
 package-dir = { "" = "src" }
 
