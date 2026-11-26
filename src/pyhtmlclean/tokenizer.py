@@ -169,17 +169,22 @@ class Tokenizer(Iterator[Token]):
             self.pos = start + 6
             return Token("comment", data="")
         scan = start + 4
-        close_normal = source.find("-->", scan)
-        close_bang = source.find("--!>", scan)
-        choices = []
-        if close_normal != -1:
-            choices.append((close_normal, 3))
-        if close_bang != -1:
-            choices.append((close_bang, 4))
-        if not choices:
+        close = -1
+        width = 0
+        probe = source.find("--", scan)
+        while probe != -1:
+            if source.startswith("-->", probe):
+                close = probe
+                width = 3
+                break
+            if source.startswith("--!>", probe):
+                close = probe
+                width = 4
+                break
+            probe = source.find("--", probe + 1)
+        if close == -1:
             self.pos = size
             return Token("comment", data=source[start + 4:])
-        close, width = min(choices)
         self.pos = close + width
         return Token("comment", data=source[start + 4:close])
 

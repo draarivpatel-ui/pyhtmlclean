@@ -14,7 +14,7 @@ No runtime dependencies. The package includes a `py.typed` marker for type check
 
 ## Verified test count
 
-The offline `unittest` suite passes **451 tests** on Python 3.9:
+The offline `unittest` suite passes **464 tests** on Python 3.9:
 
 ```bash
 PYTHONPATH=src python3 -m unittest discover -s tests

@@ -209,6 +209,11 @@ class URLPolicyTests(unittest.TestCase):
     def test_srcset_zero_width_is_rejected(self):
         self.assertIsNone(sanitize_srcset("/x.png 0w", POLICY_BASIC))
 
+    def test_srcset_long_width_digits_do_not_use_bignum_conversion(self):
+        digits = "9" * 10000
+        value = "/x.png " + digits + "w"
+        self.assertEqual(sanitize_srcset(value, POLICY_BASIC), value)
+
 
 class SrcsetTests(unittest.TestCase):
     def test_safe_density_srcset_is_preserved(self):
@@ -262,8 +267,20 @@ class SrcsetTests(unittest.TestCase):
     def test_srcset_decimal_density_is_valid(self):
         self.assertEqual(sanitize_srcset("/x.png 1.5x", POLICY_BASIC), "/x.png 1.5x")
 
-    def test_srcset_height_descriptor_is_valid(self):
-        self.assertEqual(sanitize_srcset("/x.png 100h", POLICY_BASIC), "/x.png 100h")
+    def test_srcset_height_descriptor_requires_width(self):
+        self.assertIsNone(sanitize_srcset("/x.png 100h", POLICY_BASIC))
+        self.assertEqual(sanitize_srcset("/x.png 100w 100h", POLICY_BASIC), "/x.png 100w 100h")
+
+    def test_srcset_commas_inside_urls_are_preserved(self):
+        value = "https://cdn.example.invalid/w_400,h_300,c_fill/sample.jpg 400w"
+        self.assertEqual(sanitize_srcset(value, POLICY_BASIC), value)
+
+    def test_srcset_comma_url_without_descriptor_is_not_split(self):
+        self.assertEqual(sanitize_srcset("/comma,inside.png", POLICY_BASIC), "/comma,inside.png")
+
+    def test_srcset_dangerous_candidate_after_comma_url_drops_attribute(self):
+        value = "/safe,optimized.png 1x, javascript:alert(1) 2x"
+        self.assertIsNone(sanitize_srcset(value, POLICY_BASIC))
 
     def test_srcset_zero_density_is_rejected(self):
         self.assertIsNone(sanitize_srcset("/x.png 0x", POLICY_BASIC))

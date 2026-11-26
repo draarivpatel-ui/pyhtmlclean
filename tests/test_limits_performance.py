@@ -3,7 +3,7 @@
 import time
 import unittest
 
-from pyhtmlclean import HtmlCleanError, Policy, TokenLimitError, sanitize
+from pyhtmlclean import HtmlCleanError, InputTooLargeError, Policy, TokenLimitError, sanitize
 from pyhtmlclean.policy import POLICY_PROSE
 from _support import assert_secure_and_idempotent
 
@@ -87,6 +87,11 @@ class PerformanceTests(unittest.TestCase):
         elapsed = self._best_milliseconds("<!--x-->" * 10000, rounds=1)
         self.assertLess(elapsed, 5000.0)
 
+    def test_500kb_comment_flood_completes_linearly(self):
+        source = "<!--x-->" * ((500 * 1024) // 8)
+        elapsed = self._best_milliseconds(source, rounds=1)
+        self.assertLess(elapsed, 5000.0)
+
     def test_end_tag_flood_completes_linearly(self):
         elapsed = self._best_milliseconds("</div>" * 10000, rounds=1)
         self.assertLess(elapsed, 5000.0)
@@ -131,3 +136,12 @@ class LimitRegressionTests(unittest.TestCase):
         policy = Policy([], {}, max_input_bytes=2)
         with self.assertRaises(HtmlCleanError):
             sanitize("a\x00b", policy)
+
+    def test_obviously_oversize_input_is_rejected_before_encoding_copy(self):
+        class Probe(str):
+            def encode(self, *args, **kwargs):
+                raise AssertionError("oversize input was copied before rejection")
+
+        policy = Policy([], {}, max_input_bytes=2)
+        with self.assertRaises(InputTooLargeError):
+            sanitize(Probe("abc"), policy)

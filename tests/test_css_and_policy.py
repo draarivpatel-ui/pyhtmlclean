@@ -131,6 +131,33 @@ class InlineStyleTests(unittest.TestCase):
     def test_css_backslash_escapes_are_rejected(self):
         self.assertIsNone(sanitize_style("color: red\\61", css_policy()))
 
+    def test_image_set_string_urls_are_rejected(self):
+        policy = css_policy().replace(css_properties=set(CSS_PROPERTIES) | {"background-image"})
+        for function in ("image-set", "-webkit-image-set"):
+            with self.subTest(function=function):
+                css = 'background-image: {0}("https://evil.invalid/x.png" 1x)'.format(function)
+                self.assertIsNone(sanitize_style(css, policy))
+
+    def test_unknown_css_functions_are_fail_closed(self):
+        policy = css_policy().replace(css_properties=set(CSS_PROPERTIES) | {"background-image"})
+        for css in (
+            'background-image: src("https://evil.invalid/x.png")',
+            "background-image: paint(evil)",
+            'background-image: cross-fade("https://evil.invalid/x.png", red, 50%)',
+        ):
+            with self.subTest(css=css):
+                self.assertIsNone(sanitize_style(css, policy))
+
+    def test_unclosed_css_string_is_fail_closed(self):
+        self.assertIsNone(sanitize_style('color: red; margin: "unclosed', css_policy()))
+
+    def test_unbalanced_css_parenthesis_is_fail_closed(self):
+        policy = Policy(
+            ["div"], {"*": ["style"]}, allow_inline_styles=True,
+            css_properties={"margin"},
+        )
+        self.assertIsNone(sanitize_style("margin: calc(1px + 2px", policy))
+
     def test_empty_style_is_omitted(self):
         self.assertEqual(sanitize('<div style="   ">x</div>', css_policy()), "<div>x</div>")
 

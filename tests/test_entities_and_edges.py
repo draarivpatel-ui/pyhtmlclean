@@ -3,6 +3,7 @@
 import unittest
 
 from pyhtmlclean import Policy, sanitize, tokenize
+from pyhtmlclean.entities import decode_entities_deep
 
 
 class EntityEdgeTests(unittest.TestCase):
@@ -35,6 +36,16 @@ class EntityEdgeTests(unittest.TestCase):
 
     def test_invalid_huge_numeric_reference_becomes_replacement(self):
         self.assertEqual(sanitize("<p>&#99999999999999999999;</p>"), "<p>\ufffd</p>")
+
+    def test_numeric_reference_digit_flood_is_bounded(self):
+        digits = "9" * 10000
+        self.assertEqual(sanitize("<p>&#" + digits + ";</p>"), "<p>\ufffd</p>")
+        self.assertEqual(sanitize("<p>&#x" + digits + ";</p>"), "<p>\ufffd</p>")
+        self.assertEqual(decode_entities_deep("&#" + digits + ";"), "\ufffd")
+
+    def test_numeric_reference_long_leading_zeros_still_decode(self):
+        digits = "0" * 10000 + "106"
+        self.assertEqual(sanitize("<p>&#" + digits + ";</p>"), "<p>j</p>")
 
     def test_surrogate_numeric_reference_becomes_replacement(self):
         self.assertEqual(sanitize("<p>&#xD800;</p>"), "<p>\ufffd</p>")

@@ -136,9 +136,9 @@ def _is_digits(value: str) -> bool:
 
 def _valid_srcset_descriptor(descriptor: str) -> Tuple[str, bool]:
     lower = descriptor.lower()
-    if lower.endswith("w") and _is_digits(lower[:-1]) and int(lower[:-1]) > 0:
+    if lower.endswith("w") and _is_digits(lower[:-1]) and any(ch != "0" for ch in lower[:-1]):
         return "width", True
-    if lower.endswith("h") and _is_digits(lower[:-1]) and int(lower[:-1]) > 0:
+    if lower.endswith("h") and _is_digits(lower[:-1]) and any(ch != "0" for ch in lower[:-1]):
         return "height", True
     if lower.endswith("x"):
         number = lower[:-1]
@@ -151,21 +151,121 @@ def _valid_srcset_descriptor(descriptor: str) -> Tuple[str, bool]:
     return "", False
 
 
+_SRCSET_ASCII_WHITESPACE = " \t\n\r\f"
+
+
+def _parse_srcset_candidates(value: str) -> Optional[List[Tuple[str, Tuple[str, ...]]]]:
+    """Parse srcset using the HTML standard's comma-aware candidate grammar."""
+
+    candidates = []  # type: List[Tuple[str, Tuple[str, ...]]]
+    pos = 0
+    size = len(value)
+    while True:
+        saw_comma = False
+        while pos < size and (value[pos] in _SRCSET_ASCII_WHITESPACE or value[pos] == ","):
+            if value[pos] == ",":
+                saw_comma = True
+            pos += 1
+        if saw_comma:
+            return None
+        if pos >= size:
+            break
+
+        url_start = pos
+        while pos < size and value[pos] not in _SRCSET_ASCII_WHITESPACE:
+            pos += 1
+        url = value[url_start:pos]
+        descriptors = []
+        ended_with_comma = False
+        malformed = False
+
+        if url.endswith(","):
+            trailing = len(url) - len(url.rstrip(","))
+            if trailing != 1:
+                return None
+            url = url[:-1]
+            if not url:
+                return None
+        else:
+            while pos < size and value[pos] in _SRCSET_ASCII_WHITESPACE:
+                pos += 1
+            current = []
+            state = "descriptor"
+            while True:
+                eof = pos >= size
+                ch = "" if eof else value[pos]
+                if state == "descriptor":
+                    if not eof and ch in _SRCSET_ASCII_WHITESPACE:
+                        if current:
+                            descriptors.append("".join(current))
+                            current = []
+                        state = "after"
+                    elif not eof and ch == ",":
+                        pos += 1
+                        if current:
+                            descriptors.append("".join(current))
+                        ended_with_comma = True
+                        break
+                    elif not eof and ch == "(":
+                        current.append(ch)
+                        state = "parens"
+                    elif eof:
+                        if current:
+                            descriptors.append("".join(current))
+                        break
+                    else:
+                        current.append(ch)
+                elif state == "parens":
+                    if not eof and ch == ")":
+                        current.append(ch)
+                        state = "descriptor"
+                    elif eof:
+                        malformed = True
+                        break
+                    else:
+                        current.append(ch)
+                else:
+                    if not eof and ch in _SRCSET_ASCII_WHITESPACE:
+                        pass
+                    elif eof:
+                        break
+                    else:
+                        state = "descriptor"
+                        pos -= 1
+                if eof:
+                    break
+                pos += 1
+
+        if malformed:
+            return None
+        if ended_with_comma:
+            lookahead = pos
+            while lookahead < size and value[lookahead] in _SRCSET_ASCII_WHITESPACE:
+                lookahead += 1
+            if lookahead >= size:
+                return None
+        candidates.append((url, tuple(descriptors)))
+
+    if not candidates:
+        return None
+    return candidates
+
+
 def sanitize_srcset(raw: str, policy: Policy) -> Optional[str]:
     """Validate a srcset strictly. Any invalid candidate drops the attribute."""
 
     decoded = decode_entities_deep(raw)
+    parsed = _parse_srcset_candidates(decoded)
+    if parsed is None:
+        return None
     candidates = []
-    for part in decoded.split(","):
-        pieces = part.strip().split()
-        if not pieces:
-            return None
-        url = sanitize_url(pieces[0], policy)
+    for raw_url, raw_descriptors in parsed:
+        url = sanitize_url(raw_url, policy)
         if url is None:
             return None
         descriptors = []
         seen = set()
-        for descriptor in pieces[1:]:
+        for descriptor in raw_descriptors:
             kind, valid = _valid_srcset_descriptor(descriptor)
             if not valid or kind in seen:
                 return None
@@ -173,44 +273,101 @@ def sanitize_srcset(raw: str, policy: Policy) -> Optional[str]:
             descriptors.append(descriptor.lower())
         if "density" in seen and ("width" in seen or "height" in seen):
             return None
+        if "height" in seen and "width" not in seen:
+            return None
         candidate = url
         if descriptors:
             candidate += " " + " ".join(descriptors)
         candidates.append(candidate)
-    if not candidates:
-        return None
     return ", ".join(candidates)
+
+
+SAFE_CSS_FUNCTIONS = frozenset({
+    "rgb", "rgba", "hsl", "hsla", "hwb", "lab", "lch", "oklab", "oklch",
+    "color", "color-mix", "calc", "min", "max", "clamp", "round", "mod",
+    "rem", "abs", "sign", "sin", "cos", "tan", "asin", "acos", "atan",
+    "atan2", "pow", "sqrt", "hypot", "log", "exp", "linear-gradient",
+    "radial-gradient", "conic-gradient", "repeating-linear-gradient",
+    "repeating-radial-gradient", "repeating-conic-gradient", "cubic-bezier",
+    "steps", "matrix", "matrix3d", "perspective", "rotate", "rotate3d",
+    "rotatex", "rotatey", "rotatez", "scale", "scale3d", "scalex", "scaley",
+    "scalez", "skew", "skewx", "skewy", "translate", "translate3d",
+    "translatex", "translatey", "translatez", "blur", "brightness", "contrast",
+    "drop-shadow", "grayscale", "hue-rotate", "invert", "opacity", "saturate",
+    "sepia", "counter", "counters", "symbols",
+})
 
 
 def _strip_css_comments(value: str) -> Optional[str]:
     out = []
     pos = 0
+    quote = ""
     while pos < len(value):
+        ch = value[pos]
+        if quote:
+            out.append(ch)
+            if ch == quote:
+                quote = ""
+            pos += 1
+            continue
+        if ch in "\"'":
+            quote = ch
+            out.append(ch)
+            pos += 1
+            continue
         if value.startswith("/*", pos):
             end = value.find("*/", pos + 2)
             if end == -1:
                 return None
             pos = end + 2
             continue
-        out.append(value[pos])
+        out.append(ch)
         pos += 1
     return "".join(out)
+
+
+def _css_has_disallowed_function(value: str) -> bool:
+    quote = ""
+    for index, ch in enumerate(value):
+        if quote:
+            if ch == quote:
+                quote = ""
+            continue
+        if ch in "\"'":
+            quote = ch
+            continue
+        if ch != "(":
+            continue
+        end = index - 1
+        while end >= 0:
+            scan = value[end]
+            if scan.isascii() and (scan.isalnum() or scan in "-_"):
+                end -= 1
+                continue
+            if not scan.isascii() and scan.isalpha():
+                end -= 1
+                continue
+            break
+        name = value[end + 1:index].lower()
+        if not name or name not in SAFE_CSS_FUNCTIONS:
+            return True
+    return False
 
 
 def _css_is_dangerous(value: str) -> bool:
     lower = value.lower()
     compact = "".join(ch for ch in lower if not ch.isspace())
     dangerous = (
-        "expression", "url", "@import", "behavior", "-moz-binding",
+        "expression", "url", "@import", "behavior", "-moz-binding", "progid:",
         "javascript:", "vbscript:", "data:", "file:", "blob:", "var(", "env(", "attr(",
     )
     for term in dangerous:
         if term in lower or term in compact:
             return True
-    return False
+    return _css_has_disallowed_function(value)
 
 
-def _split_css_declarations(value: str) -> List[str]:
+def _split_css_declarations(value: str) -> Optional[List[str]]:
     parts = []
     current = []
     quote = ""
@@ -227,13 +384,17 @@ def _split_css_declarations(value: str) -> List[str]:
             continue
         if ch == "(":
             depth += 1
-        elif ch == ")" and depth:
+        elif ch == ")":
+            if depth == 0:
+                return None
             depth -= 1
         if ch == ";" and depth == 0:
             parts.append("".join(current))
             current = []
         else:
             current.append(ch)
+    if quote or depth:
+        return None
     parts.append("".join(current))
     return parts
 
@@ -249,11 +410,16 @@ def sanitize_style(raw: str, policy: Policy) -> Optional[str]:
     if not policy.allow_inline_styles or not policy.css_properties:
         return None
     decoded = decode_entities_deep(raw)
+    if "\\" in decoded:
+        return None
     css = _strip_css_comments(decoded)
-    if css is None or "\\" in css or _css_is_dangerous(css):
+    if css is None or _css_is_dangerous(css):
+        return None
+    parts = _split_css_declarations(css)
+    if parts is None:
         return None
     declarations = []
-    for part in _split_css_declarations(css):
+    for part in parts:
         if not part.strip():
             continue
         if ":" not in part:
@@ -279,7 +445,10 @@ def _integer_attribute(value: str, minimum: int, maximum: int) -> Optional[str]:
     stripped = value.strip()
     if not _is_digits(stripped):
         return None
-    number = int(stripped)
+    normalized = stripped.lstrip("0") or "0"
+    if len(normalized) > len(str(maximum)):
+        return None
+    number = int(normalized)
     if number < minimum or number > maximum:
         return None
     return str(number)
@@ -422,6 +591,8 @@ def _counter_dict(counter: Counter) -> Dict[str, int]:
 def sanitize_with_policy(source: str, policy: Policy, audit: Optional[_AuditState] = None) -> str:
     if not isinstance(source, str):
         raise HtmlCleanError("HTML input must be a string", "INVALID_INPUT")
+    if len(source) > policy.max_input_bytes:
+        raise InputTooLargeError(policy.max_input_bytes)
     if len(source.encode("utf-8", errors="surrogatepass")) > policy.max_input_bytes:
         raise InputTooLargeError(policy.max_input_bytes)
     if any("\ud800" <= ch <= "\udfff" for ch in source):

@@ -397,6 +397,11 @@ class LimitAndPolicyTests(unittest.TestCase):
     def test_invalid_image_dimension_is_removed(self):
         self.assertEqual(sanitize('<img src="/x" width="-1">', "basic"), '<img src="/x">')
 
+    def test_long_image_dimension_digit_flood_is_removed(self):
+        digits = "9" * 10000
+        source = '<img src="/x" width="' + digits + '">'
+        self.assertEqual(sanitize(source, "basic"), '<img src="/x">')
+
     def test_sanitizer_reuses_policy(self):
         cleaner = Sanitizer("strict")
         self.assertEqual(cleaner.sanitize("<div><b>x</b></div>"), "<b>x</b>")
